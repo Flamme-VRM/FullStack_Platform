@@ -2,6 +2,10 @@
 
 AsylBILIM (Асыл Білім — "Precious Knowledge" in Kazakh) is a fullstack AI assistant built for students preparing for the **UNT** (Unified National Testing) in Kazakhstan. It combines a **FastAPI** backend with a **Flutter** mobile frontend to deliver intelligent, context-aware tutoring across Math, Informatics, and History.
 
+
+<img width="1080" height="2424" alt="Screenshot_20260226_012428" src="https://github.com/user-attachments/assets/42671e81-57c5-452f-aa55-8028a1424898" />
+
+
 ---
 
 ## Architecture Overview
