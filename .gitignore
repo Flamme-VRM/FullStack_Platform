@@ -1,0 +1,68 @@
+# ===== Python / Backend =====
+.env
+.env.*
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+venv/
+env/
+*.egg-info/
+*.egg
+dist/
+build/
+*.log
+logs/
+
+# Sensitive config
+Backend/src/config.py
+Backend/SYSPROMPT.txt
+
+# Redis
+dump.rdb
+
+# Audio temp files
+*.ogg
+*.wav
+*.mp3
+
+# Model cache
+.cache/
+
+# ===== Flutter / FrontEND =====
+FrontEND/.dart_tool/
+FrontEND/.packages
+FrontEND/build/
+FrontEND/.flutter-plugins
+FrontEND/.flutter-plugins-dependencies
+FrontEND/.pub-cache/
+FrontEND/.pub/
+FrontEND/pubspec.lock
+
+# Android
+FrontEND/android/.gradle/
+FrontEND/android/local.properties
+FrontEND/android/*.jks
+FrontEND/android/key.properties
+
+# iOS
+FrontEND/ios/Pods/
+FrontEND/ios/.symlinks/
+
+# ===== IDEs =====
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+
+# ===== Temporary =====
+*.tmp
+*.temp
+temp/
+tmp/
