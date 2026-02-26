@@ -18,9 +18,9 @@ FullStack_Platform/
 
 ```mermaid
 graph TD
-    A[Flutter App] -->|HTTP REST| B[FastAPI Server]
+    A[Flutter App] -->|HTTP SSE| B[FastAPI Server]
     B -->|Chat & Memory| C[(Redis Cloud)]
-    B -->|AI Generation| D[Google Gemini AI]
+    B -->|AI Generation| D[Google Gemini 3.0 Flash]
     B -->|Knowledge Retrieval| E[(RAG / Vector DB)]
     B -->|Speech Recognition| F[Whisper STT]
 ```
@@ -35,10 +35,10 @@ Located in `Backend/`. A FastAPI server that handles all application logic: chat
 
 | Component | Technology |
 |-----------|-----------|
-| Web Framework | FastAPI 0.104+ with Uvicorn |
-| AI / LLM | Google Gemini (configurable model) |
+| Web Framework | FastAPI 0.104+ with Uvicorn (SSE Streaming) |
+| AI / LLM | Google Gemini 3.0 Flash |
 | Caching & Storage | Redis Cloud (via `redis-py` + `msgpack`) |
-| Semantic Search | Sentence Transformers + custom Vector DB |
+| Semantic Search | Sentence Transformers (all-MiniLM-L6-v2) |
 | Speech-to-Text | Hugging Face Whisper (GPU-accelerated) |
 | Bot Interface | Aiogram 3 (Telegram) |
 | Config Management | Pydantic Settings + `.env` |
@@ -91,6 +91,7 @@ Backend/
 | `PATCH` | `/api/chats/{chat_id}` | Rename a chat |
 | `GET` | `/api/chats/{user_id}/{chat_id}/history` | Get message history for a chat |
 | `POST` | `/api/chat` | Send a text message, get AI response |
+| `POST` | `/api/chat/stream` | **Streaming** AI response (SSE) |
 | `POST` | `/api/voice` | Send audio file, get transcription + AI response |
 | `GET` | `/api/status/{user_id}` | Rate limit info (count / remaining / reset) |
 
@@ -103,8 +104,8 @@ Interactive docs available at `http://localhost:8000/docs` when the server is ru
 3. **Chat history loaded** from Redis (`chat_history:{user_id}:{chat_id}`)
 4. **RAG retrieval** — the message is embedded and semantically matched against the knowledge base in `documents.db` to find the top-K relevant passages
 5. **Prompt assembled** — system prompt + retrieved context + full conversation history sent to Gemini
-6. **Response generated** and returned in Markdown format
-7. **History updated** in Redis (last 50 messages, TTL: 7 days)
+6. **Streaming Response** — Gemini generates tokens, backend yields them via SSE to Flutter
+7. **History updated** — Full response saved in Redis after streaming finishes (TTL: 7 days)
 8. **Chat metadata updated** (last message preview, message count, TTL: 30 days)
 
 ### Chat & Rate Limiting Data Model (Redis)
@@ -225,9 +226,10 @@ FrontEND/
 
 - **Multiple Chats** — create, switch between, rename, and delete conversations, all persisted in the drawer
 - **Markdown Rendering** — bot responses render `**bold**`, *italics*, `code`, code blocks, lists, and headers using `flutter_markdown`
-- **Voice Input** — tap the mic button to record audio (AAC at 16kHz), which is sent to `/api/voice` for transcription and an AI response
-- **Persistent User ID** — `shared_preferences` saves a user ID on first launch so chat history survives app restarts
-- **Animated Typing Indicator** — pulsing dots displayed while waiting for an AI response
+- **Voice Input** — record audio, which is sent to `/api/voice` for transcription and an AI response
+- **Persistent User ID** — saved on first launch so chat history survives app restarts
+- **SSE Streaming** — real-time response delivery for minimal perceived latency
+- **Word-by-word Typing** — bot responses reveal progressively for a premium feel
 - **Offline Banner** — red banner appears at the top when the backend is unreachable
 - **Rate Limit Badge** — shows remaining messages per day (`X/15`) in the input area
 

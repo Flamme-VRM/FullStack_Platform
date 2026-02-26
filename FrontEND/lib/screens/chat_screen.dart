@@ -26,6 +26,8 @@ class _ChatScreenState extends State<ChatScreen> {
   RateLimitInfo? _rateLimitInfo;
   bool _isServerHealthy = false;
   bool _isLoadingChats = false;
+  String _streamingText = '';
+  bool _isStreaming = false;
 
   @override
   void initState() {
@@ -208,7 +210,11 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _renameChat(ChatInfo chat, String newTitle) async {
     try {
-      final updated = await _apiService.renameChat(_userId, chat.chatId, newTitle);
+      final updated = await _apiService.renameChat(
+        _userId,
+        chat.chatId,
+        newTitle,
+      );
       if (!mounted) return;
 
       if (updated != null) {
@@ -255,7 +261,7 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Future<void> _sendMessage() async {
+  Future<void> _sendMessageStreaming() async {
     if (_currentChat == null) {
       _showSnackBar('Алдымен чат жасаңыз');
       return;
@@ -270,6 +276,7 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
+    // Добавляем сообщение пользователя
     final userMessage = ChatMessage(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       text: text,
@@ -277,54 +284,71 @@ class _ChatScreenState extends State<ChatScreen> {
       timestamp: DateTime.now(),
     );
 
+    // Добавляем пустой bubble бота сразу — он будет заполняться чанками
+    final botMessageId = '${DateTime.now().millisecondsSinceEpoch}_bot';
+    final emptyBotMessage = ChatMessage(
+      id: botMessageId,
+      text: '',
+      isUser: false,
+      timestamp: DateTime.now(),
+    );
+
     setState(() {
       _messages.add(userMessage);
+      _messages.add(emptyBotMessage);
       _isLoading = true;
     });
 
     _messageController.clear();
     _scrollToBottom();
 
+    // Накапливаем полный текст чтобы обновлять bubble
+    String accumulatedText = '';
+
     try {
-      final response = await _apiService.sendMessage(
+      final stream = _apiService.sendMessageStream(
         _userId,
         _currentChat!.chatId,
         text,
       );
 
-      if (!mounted) return;
+      await for (final chunk in stream) {
+        if (!mounted) return;
 
-      final botMessage = ChatMessage(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
-        text: response['response'] ?? 'Жауап алынбады',
-        isUser: false,
-        timestamp: DateTime.now(),
-      );
+        accumulatedText += chunk;
 
-      setState(() {
-        _messages.add(botMessage);
-        _isLoading = false;
+        // Находим bubble бота по id и обновляем его текст
+        setState(() {
+          final idx = _messages.indexWhere((m) => m.id == botMessageId);
+          if (idx != -1) {
+            _messages[idx] = ChatMessage(
+              id: botMessageId,
+              text: accumulatedText,
+              isUser: false,
+              timestamp: _messages[idx].timestamp,
+            );
+          }
+        });
 
-        _rateLimitInfo = RateLimitInfo(
-          count: response['message_count'] ?? 0,
-          limit: 15,
-          remaining: response['remaining_messages'] ?? 15,
-        );
-      });
+        _scrollToBottom();
+      }
 
-      _scrollToBottom();
+      // Стриминг завершён
+      setState(() => _isLoading = false);
     } catch (e) {
       if (!mounted) return;
 
-      final errorMessage = ChatMessage(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
-        text: 'Қате: ${e.toString().replaceAll('Exception: ', '')}',
-        isUser: false,
-        timestamp: DateTime.now(),
-      );
-
       setState(() {
-        _messages.add(errorMessage);
+        // Заменяем пустой bubble на сообщение об ошибке
+        final idx = _messages.indexWhere((m) => m.id == botMessageId);
+        if (idx != -1) {
+          _messages[idx] = ChatMessage(
+            id: botMessageId,
+            text: 'Қате: ${e.toString().replaceAll('Exception: ', '')}',
+            isUser: false,
+            timestamp: DateTime.now(),
+          );
+        }
         _isLoading = false;
       });
 
@@ -420,7 +444,7 @@ class _ChatScreenState extends State<ChatScreen> {
             isServerHealthy: _isServerHealthy,
             hasChatSelected: _currentChat != null,
             rateLimitInfo: _rateLimitInfo,
-            onSend: _sendMessage,
+            onSend: _sendMessageStreaming,
             onSendVoice: _sendVoiceMessage,
           ),
         ],
@@ -487,7 +511,12 @@ class _ChatScreenState extends State<ChatScreen> {
         if (index == _messages.length) {
           return const LoadingBubble();
         }
-        return MessageBubble(message: _messages[index]);
+
+        final msg = _messages[index];
+        // Only animate the very last message if it's from the bot
+        final shouldAnimate = (index == _messages.length - 1) && !msg.isUser;
+
+        return MessageBubble(message: msg, animate: shouldAnimate);
       },
     );
   }
@@ -515,4 +544,3 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 }
-

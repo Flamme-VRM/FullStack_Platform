@@ -9,7 +9,9 @@ Flutter-based mobile interface for the **AsylBILIM** AI-powered UNT exam prepara
 - 🎙️ **Voice input** — record audio and send it for Kazakh speech recognition (STT)
 - 🔒 **Persistent user ID** — chats survive app restarts via `shared_preferences`
 - 📡 **Server health monitoring** — offline banner when backend is unreachable
-- ⏳ **Animated typing indicator** — pulsing dots while the AI generates a response
+- ⚡ **SSE Streaming** — real-time response delivery for zero perceived latency
+- ⌨️ **Premium Typewriter Effect** — AI responses reveal word-by-word with smooth Markdown rendering
+- ⏳ **Pulsing Indicator** — elegant animation while waiting for the first token
 
 ## Project Structure
 

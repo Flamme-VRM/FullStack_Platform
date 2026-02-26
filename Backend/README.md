@@ -1,156 +1,287 @@
-# AsylBILIM v2 📚 - UNT Preparation Assistant for Kazakh Students
+# AsylBILIM — AI Platform
 
-AsylBILIM is a specialized AI-powered Telegram bot designed exclusively for **UNT (Unified National Testing)** preparation for Kazakhstani students. Built on Google's advanced Gemini 3.0 Flash Preview LLM with RAG (Retrieval-Augmented Generation) capabilities, AsylBILIM provides instant, accurate, and localized assistance for UNT exam preparation, all in the Kazakh language.
+> **Асыл Білім** (Kazakh: *Precious Knowledge*) — an AI-powered backend for UNT exam preparation, delivering intelligent tutoring in Kazakh via a REST API and Telegram bot.
 
-## ✨ Why AsylBILIM?
+Built on **Google Gemini 3.0 Flash**, **RAG** (Retrieval-Augmented Generation), and **Kazakh Whisper STT**, deployed over **FastAPI** with **Redis** for persistence. Supports **SSE Streaming** for real-time word-by-word delivery.
 
-Preparing for UNT can be challenging. AsylBILIM streamlines your UNT preparation by offering:
+---
 
-* **100% Kazakh Language Support:** Get answers and explanations exclusively in Kazakh, ensuring clarity and cultural relevance.
-* **UNT-Focused Assistance:** Specialized AI trained specifically for UNT exam preparation and question types.
-* **Semantic RAG System:** Access to a deep knowledge base of UNT study materials using advanced vector search.
-* **Smart Rate Limiting:** Fair usage system (15 messages per 24 hours) to ensure quality service for all students.
-* **Specialized Voice Input:** High-accuracy Kazakh speech recognition powered by specialized Whisper models.
-* **Intelligent Context Awareness:** The bot remembers your conversation history for more coherent learning sessions.
+## What It Does
 
-**AsylBILIM is your dedicated UNT preparation AI tutor, available 24/7 to help you excel!**
+Kazakhstani high-school students use AsylBILIM to prepare for the **UNT** (Unified National Testing). The platform:
 
-## 🚀 Key Features
+- Answers questions on **Math, Informatics, and History** in the Kazakh language
+- Retrieves relevant context from a hand-crafted **knowledge base** of 60+ UNT study documents before generating answers
+- Accepts **voice messages** and transcribes them using a Kazakh-tuned Whisper model
+- Manages **multiple named conversations** per user, with full history persistence
+- Enforces a **rate limit** of 15 messages / 24 hours via Redis to ensure fair usage
 
-* **UNT-Specialized AI (Gemini 3.0 Flash Preview):** Get accurate answers to UNT-specific questions with advanced LLM technology.
-* **SQLite-based Vector Search:** High-performance local semantic search for retrieving relevant educational context.
-* **Smart Document Indexing:** Offline indexing script to process and vectorize UNT study materials.
-* **File-Based System Prompts:** Dynamic system prompt loading from `SYSPROMPT.txt` for easy configuration.
-* **Kazakh Whisper ASR:** Specialized Hugging Face model (`whisper-turbo-ksc2`) for accurate Kazakh voice transcription.
-* **Redis Caching & Rate Limiting:** High-performance session management and fair usage enforcement.
-* **Pydantic Configuration:** Robust settings management via environment variables.
-* **Graceful Resource Management:** Proper handling of GPU/CPU resources and ML model lifecycles.
+---
 
-## ⚙️ Architecture
-
-This version features a **modular, production-ready architecture** with clear separation of concerns:
+## Architecture
 
 ```
-KazakhBot-v2-1/
-├── documents.db                     # SQLite vector database
-├── main.py                          # Application entry point
-├── SYSPROMPT.txt                    # File-based system prompt configuration
-├── requirements.txt                 # Python dependencies
-├── .env                            # Environment configuration (not tracked)
-├── RAG/                            # RAG document storage (JSON files)
-├── scripts/                        # Utility scripts
-│   ├── index_documents.py          # Script to index JSONs into Vector DB
+Client (Flutter App / Telegram)
+        │
+        ▼
+┌──────────────────────────────────────────────────────┐
+│                FastAPI  (api_server.py)               │
+│                                                      │
+│  /api/chat ──► AIService ──► Gemini LLM              │
+│  /api/chat/stream ──► SSE Stream ──► Gemini LLM      │
+│                    └──► RAG Pipeline ──► Vector DB   │
+│  /api/voice ──► SpeechToTextService (Whisper)        │
+│  /api/chats/* ──► CacheService ──► Redis             │
+└──────────────────────────────────────────────────────┘
+        │                    │
+      Redis              SQLite
+  (chat history,        (vector store
+   metadata,            documents.db)
+   rate limits)
+```
+
+---
+
+## Project Structure
+
+```
+AI_Platform/
+├── src/
+│   ├── api_server.py              # FastAPI app — all REST endpoints (v2.1.0)
+│   ├── bot.py                     # Telegram bot (aiogram 3)
+│   ├── config.py                  # Pydantic Settings — loaded from .env
+│   ├── handlers/
+│   │   └── message_handler.py    # Telegram message routing
+│   └── services/
+│       ├── ai.py                  # AI generation + RAG pipeline integration
+│       ├── cache.py               # Redis client — history, metadata, rate limits
+│       ├── speech_to_text.py     # Whisper Kazakh ASR service
+│       ├── embeddings.py          # Sentence-Transformers embedding model
+│       ├── vector_db.py           # SQLite-backed local vector store
+│       ├── improved_rag_service.py # Semantic retrieval (top-K search)
+│       ├── chunker.py             # Text chunking for RAG indexing
+│       ├── document_loader.py    # Load JSON docs from RAG/
+│       ├── indexer.py             # Index pipeline: load → chunk → embed → store
+│       └── analytics.py           # Usage tracking
+├── RAG/                           # 60+ JSON knowledge-base files
+│   ├── math_*.json               # Algebra, geometry, calculus, trigonometry
+│   ├── informatics_*.json        # Python, SQL, networking, algorithms
+│   └── history_*.json            # Kazakhstan history
+├── scripts/
+│   └── index_documents.py        # CLI: indexes RAG/ into documents.db
 ├── tests/
-│   ├── test_rag_system.py
-│   ├── chunker_verify.py
-│   ├── db_queries_verify.py
-└── src/
-    ├── __init__.py
-    ├── bot.py                      # Main bot class and initialization
-    ├── config.py                   # Pydantic-based configuration
-    ├── api_server.py               # FastAPI server for analytics/API
-    ├── handlers/
-    │   ├── __init__.py
-    │   └── message_handler.py      # Message routing and processing
-    └── services/
-        ├── __init__.py
-        ├── ai.py                   # Gemini AI service with RAG integration
-        ├── cache.py                # Redis caching & rate limiting
-        ├── speech_to_text.py       # Kazakh Whisper ASR service
-        ├── vector_db.py            # SQLite-based semantic search
-        ├── embeddings.py           # Sentence-transformers embeddings
-        ├── analytics.py            # Usage analytics service
-        └── chunker.py              # Text chunking logic
+│   ├── test_rag_system.py        # RAG integration tests
+│   ├── verify_rag.py             # Retrieval quality checks
+│   └── tst.py                    # Misc scripts
+├── documents.db                   # SQLite vector database (pre-built)
+├── main.py                        # Telegram bot runner
+└── requirements.txt
 ```
 
-### Key Architectural Components:
+---
 
-* **`ai.py`**: Integrates Gemini 3.0 Flash Preview with a semantic retrieval pipeline.
-* **`vector_db.py`**: Custom SQLite-based vector storage for efficient local search.
-* **`speech_to_text.py`**: Optimized ASR using `abilmansplus/whisper-turbo-ksc2`.
-* **`indexer.py`**: Automated pipeline for document cleaning, chunking, and embedding.
-* **`cache.py`**: Multi-layer caching (user history, API responses) using Redis.
+## REST API
 
-## 🛠️ Technologies Used
+Interactive docs: `http://localhost:8000/docs`
 
-* **Python 3.8+**: Core programming language
-* **aiogram 3.0+**: Asynchronous Telegram bot framework
-* **Google Generative AI**: Gemini 3.0 Flash Preview for intelligent responses
-* **SQLite**: Local vector database for semantic search
-* **Redis**: Distributed caching and rate limiting
-* **Sentence-Transformers**: Local embedding generation
-* **Hugging Face Transformers**: Whisper-based Kazakh speech recognition
-* **PyTorch**: Backend for ML models (with CUDA support)
-* **Pydantic v2**: Settings and data validation
-* **FastAPI**: Backend API and analytics (optional)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/` | Service info, version, available routes |
+| `GET` | `/health` | Health check — Redis ping + model name |
+| `POST` | `/api/chats/new` | Create a new chat conversation |
+| `GET` | `/api/chats/{user_id}` | List all chats for a user |
+| `DELETE` | `/api/chats/{chat_id}?user_id=` | Delete a chat and all its history |
+| `PATCH` | `/api/chats/{chat_id}` | Rename a chat |
+| `GET` | `/api/chats/{user_id}/{chat_id}/history` | Get structured message history |
+| `POST` | `/api/chat` | Send a text message, receive AI response |
+| `POST` | `/api/chat/stream` | **Streaming** AI response via SSE |
+| `POST` | `/api/voice` | Upload audio, receive transcription + AI response |
+| `GET` | `/api/status/{user_id}` | Rate limit info: count / remaining / reset |
 
-## 🚀 Getting Started
+### Example: Text Chat
+
+```http
+POST /api/chat
+Content-Type: application/json
+
+{
+  "user_id": 123456,
+  "chat_id": "uuid-here",
+  "message": "Квадрат теңдеуді қалай шешемін?",
+  "language": "kk"
+}
+```
+
+```json
+{
+  "response": "Квадрат теңдеуді шешу үшін...",
+  "message_count": 3,
+  "remaining_messages": 12
+}
+```
+
+---
+
+## How the AI Pipeline Works
+
+```
+User message
+    │
+    ├─ 1. Rate limit check (Redis) ──► 429 if exceeded
+    │
+    ├─ 2. Load chat history from Redis
+    │
+    ├─ 3. Embed message with Sentence-Transformers
+    │
+    ├─ 4. Semantic search → top-K passages from documents.db
+    │
+    ├─ 5. Build prompt:
+    │       [System Prompt] + [Retrieved Context] + [Chat History] + [Message]
+    │
+    ├─ 6. Generate response via Google Gemini 3.0 Flash
+    ├─ 7. SSE Streaming (if using /api/chat/stream)
+    ├─ 8. Save final history to Redis (last 50 msgs, TTL: 7 days)
+    │
+    └─ 9. Update chat metadata (last_message, count, TTL: 30 days)
+```
+
+---
+
+## Data Storage (Redis)
+
+All chat state is stored in Redis using msgpack serialization:
+
+| Key | Type | TTL | Purpose |
+|-----|------|-----|---------|
+| `user_chats:{user_id}` | List | 30 days | Ordered list of chat UUIDs |
+| `chat_metadata:{user_id}:{chat_id}` | String | 30 days | Title, dates, last message, count |
+| `chat_history:{user_id}:{chat_id}` | String | 7 days | `["User: ...", "AsylBILIM: ..."]` |
+| `rate_limit:{user_id}` | String | 24 hours | Message count for current window |
+
+---
+
+## Voice Input (Whisper STT)
+
+The `/api/voice` endpoint:
+
+1. Receives an uploaded audio file (OGG from mobile, or any format)
+2. Converts to WAV, resamples to **16kHz mono** if needed (via `pydub`)
+3. Runs **Hugging Face Whisper** with `language="kazakh"` and `task="transcribe"`
+4. Passes the transcribed text into the standard AI pipeline
+5. Returns `recognized_text` + `response` in one call
+
+> CUDA is used automatically when available. Falls back to CPU gracefully.
+
+---
+
+## Knowledge Base (RAG)
+
+The `RAG/` directory contains hand-crafted JSON documents grouped by subject:
+
+| Subject | File Count | Topics |
+|---------|-----------|--------|
+| **Math** | ~35 | Algebra, geometry, calculus, combinatorics, probability, sequences, trigonometry |
+| **Informatics** | ~20 | Python, SQL, HTML/CSS, networking, algorithms, sorting, logic |
+| **History** | ~5 | Kazakhstan history, context documents |
+
+Documents are indexed into `documents.db` (SQLite + cosine similarity search). To reindex after adding new files:
+
+```bash
+python scripts/index_documents.py
+```
+
+---
+
+## Setup
 
 ### Prerequisites
 
-* Python 3.8 or higher
-* Redis server (5.0+)
-* NVIDIA GPU (recommended for ASR)
-* Google Gemini API key
-* Telegram Bot Token
+- Python 3.8+
+- Redis (cloud or local — [Redis Cloud free tier](https://redis.com/try-free/) works)
+- NVIDIA GPU recommended for STT (CPU fallback available)
+- Google Gemini API key
+- Telegram Bot Token (for the bot interface)
 
-### Installation
+### 1. Clone
 
-1. Clone the repository:
 ```bash
-git clone https://github.com/Flamme-VRM/KazakhBot-v2.git
-cd KazakhBot-v2-1
+git clone https://github.com/Flamme-VRM/AI_Platform.git
+cd AI_Platform
 ```
 
-2. Install dependencies:
+### 2. Install Dependencies
+
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Create `.env` file with your configuration:
+> PyTorch is pinned to CUDA 13.0. Adjust `--index-url` in `requirements.txt` for your CUDA version or use `pip install torch` for CPU-only.
+
+### 3. Configure
+
+Create a `.env` file in the project root (**never committed**):
+
 ```env
-BOT_TOKEN=your_telegram_bot_token_here
-LLM_API_KEY=your_google_gemini_api_key_here
-MODEL=gemini-3.0-flash
-REDIS_HOST=localhost
-REDIS_PORT=6379
-REDIS_PASSWORD=your_redis_password_here
+BOT_TOKEN=your_telegram_bot_token
+LLM_API_KEY=your_google_gemini_api_key
+MODEL=gemini-3-flash-preview
+
+REDIS_HOST=your_redis_host
+REDIS_PORT=15792
+REDIS_USERNAME=default
+REDIS_PASSWORD=your_redis_password
+
+RATE_LIMIT=15
+RATE_WINDOW_HOURS=24
+
 VECTOR_DB_PATH=documents.db
+SYSPROMPT_PATH=SYSPROMPT.txt
 ```
 
-4. Index the UNT materials:
+### 4. Index Knowledge Base
+
 ```bash
-python scripts/index_documents.py --clear
+python scripts/index_documents.py
 ```
 
-5. Start the bot:
+### 5. Start REST API
+
+```bash
+python -m uvicorn src.api_server:app --host 0.0.0.0 --port 8000 --reload
+```
+
+### 6. Start Telegram Bot (optional)
+
 ```bash
 python main.py
 ```
 
-## 📊 Rate Limiting
+---
 
-To ensure fair usage and service quality:
+## Rate Limiting
 
-* **Limit**: 15 messages per 24 hours per user
-* **Reset**: Rolling 24-hour window from first message
-* **Transparent**: Users are notified of remaining messages via the `/status` command
+| Setting | Value |
+|---------|-------|
+| Messages per window | **15** |
+| Window duration | **24 hours** |
+| Reset mechanism | Rolling from first message |
+| Enforcement | Redis key with 24h TTL |
 
-## 🤝 Contributing
+Users receive remaining count in every response. A `429` HTTP status is returned when the limit is exceeded, with `retry_after` in seconds.
 
-We welcome contributions! Please fork the repository and submit a pull request.
+---
 
-## 📝 License
+## Mobile Frontend
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This backend powers the **AsylBILIM Flutter mobile app**:
+→ [AI_Platform_UI](https://github.com/Flamme-VRM/AI_Platform_UI) | [FullStack_Platform](https://github.com/Flamme-VRM/FullStack_Platform)
 
-## 📞 Support
+---
 
-Contact the project maintainer: [@Vermeei](https://t.me/Vermeei)
+## Contact
 
-## 👨‍💻 Creator
-
-**Created by Shyngisbek Asylkhan**
+- Telegram: [@Vermeei](https://t.me/Vermeei)
+- Created by **Shyngisbek Asylkhan**
 
 ---
 

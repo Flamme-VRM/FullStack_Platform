@@ -1,7 +1,8 @@
 import asyncio
 import logging
 import os
-import google.generativeai as genai
+from google import genai
+from google.genai import types as genai_types
 from tenacity import retry, stop_after_attempt, wait_exponential
 from .cache import CacheService
 from .embeddings import EmbeddingService
@@ -14,8 +15,8 @@ logger = logging.getLogger(__name__)
 class AIService:
     def __init__(self, api_key: str, model_name: str, cache_service: CacheService, 
                  document_loader=None):  # document_loader is deprecated but kept for compatibility
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel(model_name)
+        self.client = genai.Client(api_key=api_key)
+        self.model_name = model_name
         self.cache = cache_service
         self.system_prompt = self._load_system_prompt_from_file()
         
@@ -46,7 +47,11 @@ class AIService:
         reraise=True
     )
     async def _generate_with_retry(self, prompt: str):
-        return await asyncio.to_thread(self.model.generate_content, prompt)
+        return await asyncio.to_thread(
+            self.client.models.generate_content,
+            model=self.model_name,
+            contents=prompt,
+        )
 
     def _load_system_prompt_from_file(self, filename: str = None) -> str:
         """Load system prompt from a text file."""
@@ -167,15 +172,11 @@ class AIService:
 
             return response.text
 
-        except genai.types.BlockedPromptException as e:
-            logger.error(f"Content blocked for user {user_id}: {e}")
-            return "Кешіріңіз, сұрақ қауіпсіздік фильтрлерімен бөгелді. Басқаша сұраңыз."
-
-        except genai.types.StopCandidateException as e:
-            logger.error(f"AI generation stopped for user {user_id}: {e}")
-            return "Кешіріңіз, жауап генерациясы тоқтатылды. Қайталап көріңіз."
-
         except Exception as e:
+            err = str(e).lower()
+            if 'blocked' in err or 'safety' in err:
+                logger.error(f"Content blocked for user {user_id}: {e}")
+                return "Кешіріңіз, сұрақ қауіпсіздік фильтрлерімен бөгелді. Басқаша сұраңыз."
             logger.error(f"Unexpected error for user {user_id}: {type(e).__name__}: {str(e)}")
             return "Кешіріңіз, техникалық қате орын алды. Кейінірек қайталап көріңіз."
          
@@ -217,3 +218,89 @@ class AIService:
         except Exception as e:
             logger.error(f"Error for chat {chat_id}: {e}")
             return "Кешіріңіз, техникалық қате орын алды."
+
+    def stream_response_for_chat(
+        self,
+        user_id: int,
+        chat_id: str,
+        text: str,
+        history: list
+    ):
+        """
+        Стриминговая генерация ответа для конкретного чата.
+        Возвращает генератор SSE-событий.
+
+        plain def (не async) — намеренно, так как generate_content_stream
+        является синхронным блокирующим вызовом. FastAPI автоматически
+        запустит его в отдельном потоке через iterate_in_threadpool().
+        """
+        import time
+
+        recent_history = history[-10:] if len(history) > 10 else history
+        relevant_context = self._retrieve_relevant_documents(text)
+
+        full_prompt = (
+            f"{self.system_prompt}\n\n"
+            f"Conversation History:\n" + "\n".join(recent_history)
+        )
+
+        if relevant_context:
+            full_prompt += f"\n\n{relevant_context}"
+
+        # --- Кэш: если есть точное совпадение — стримим из кэша ---
+        cached_response = self.cache.get_cached_response(full_prompt)
+        if cached_response:
+            logger.info(f"Streaming cached response for chat {chat_id}")
+            for word in cached_response.split(" "):
+                yield f"data: {word} \n\n"
+                time.sleep(0.04)  # имитируем скорость генерации
+            yield "data: [DONE]\n\n"
+            return  # выходим, Redis не трогаем — история уже была сохранена ранее
+
+        # --- Нет кэша — стримим от Gemini ---
+        try:
+            gemini_stream = self.client.models.generate_content_stream(
+                model=self.model_name,
+                contents=full_prompt
+            )
+
+            full_response = ""  # накапливаем для Redis и кэша
+
+            for chunk in gemini_stream:
+                if chunk.text:
+                    full_response += chunk.text
+                    # Экранируем переносы строк для SSE-формата
+                    safe_chunk = chunk.text.replace("\n", "\\n")
+                    yield f"data: {safe_chunk}\n\n"
+
+            # Стриминг завершён — пишем в Redis и кэш
+            if full_response:
+                self.cache.cache_response(full_prompt, full_response)
+
+            yield "data: [DONE]\n\n"
+
+        except Exception as e:
+            logger.error(f"Streaming error for chat {chat_id}: {e}")
+            yield "data: [ERROR]\n\n"
+
+    async def generate_chat_title(self, user_message: str, ai_response: str) -> str:
+        """Generate a short chat title from the first exchange."""
+        try:
+            prompt = (
+                "Берілген сұхбат негізінде 3-5 сөзден тұратын қысқа тақырып жаз. "
+                "Тек тақырыпты жаз, басқа ештеңе жазба. Тырнақшасыз.\n\n"
+                f"Қолданушы: {user_message[:200]}\n"
+                f"Жауап: {ai_response[:200]}"
+            )
+            response = await asyncio.to_thread(
+                self.client.models.generate_content,
+                model=self.model_name,
+                contents=prompt,
+            )
+            if response and response.text:
+                title = response.text.strip().strip('"\'')
+                return title[:60]  # Cap at 60 chars
+            return "Жаңа чат"
+        except Exception as e:
+            logger.error(f"Title generation error: {e}")
+            return "Жаңа чат"

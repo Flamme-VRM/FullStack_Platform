@@ -20,14 +20,16 @@ class ApiService {
 
   Future<ChatInfo> createNewChat(int userId, {String? title}) async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/chats/new'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'user_id': userId,
-          if (title != null) 'title': title,
-        }),
-      ).timeout(const Duration(seconds: 10));
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/chats/new'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'user_id': userId,
+              if (title != null) 'title': title,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         return ChatInfo.fromJson(jsonDecode(response.body));
@@ -41,9 +43,11 @@ class ApiService {
 
   Future<List<ChatInfo>> getUserChats(int userId) async {
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/chats/$userId'),
-      ).timeout(const Duration(seconds: 10));
+      final response = await http
+          .get(
+            Uri.parse('$baseUrl/chats/$userId'),
+          )
+          .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -61,9 +65,11 @@ class ApiService {
 
   Future<bool> deleteChat(int userId, String chatId) async {
     try {
-      final response = await http.delete(
-        Uri.parse('$baseUrl/chats/$chatId?user_id=$userId'),
-      ).timeout(const Duration(seconds: 10));
+      final response = await http
+          .delete(
+            Uri.parse('$baseUrl/chats/$chatId?user_id=$userId'),
+          )
+          .timeout(const Duration(seconds: 10));
 
       return response.statusCode == 200;
     } catch (e) {
@@ -71,16 +77,19 @@ class ApiService {
     }
   }
 
-  Future<ChatInfo?> renameChat(int userId, String chatId, String newTitle) async {
+  Future<ChatInfo?> renameChat(
+      int userId, String chatId, String newTitle) async {
     try {
-      final response = await http.patch(
-        Uri.parse('$baseUrl/chats/$chatId'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'user_id': userId,
-          'title': newTitle,
-        }),
-      ).timeout(const Duration(seconds: 10));
+      final response = await http
+          .patch(
+            Uri.parse('$baseUrl/chats/$chatId'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'user_id': userId,
+              'title': newTitle,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         return ChatInfo.fromJson(jsonDecode(response.body));
@@ -98,16 +107,18 @@ class ApiService {
     String message,
   ) async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/chat'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'message': message,
-          'user_id': userId,
-          'chat_id': chatId,
-          'language': 'kk',
-        }),
-      ).timeout(const Duration(seconds: 30));
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/chat'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'message': message,
+              'user_id': userId,
+              'chat_id': chatId,
+              'language': 'kk',
+            }),
+          )
+          .timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
@@ -126,15 +137,75 @@ class ApiService {
     }
   }
 
+  Stream<String> sendMessageStream(
+    int userId,
+    String chatId,
+    String message,
+  ) async* {
+    final request = http.Request(
+      'POST',
+      Uri.parse('$baseUrl/chat/stream'),
+    );
+
+    request.headers['Content-Type'] = 'application/json';
+    request.body = jsonEncode({
+      'message': message,
+      'user_id': userId,
+      'chat_id': chatId,
+      'language': 'kk',
+    });
+
+    final streamedResponse = await request.send();
+
+    if (streamedResponse.statusCode == 429) {
+      // Rate limit — читаем тело и бросаем исключение
+      final body = await streamedResponse.stream.bytesToString();
+      final errorData = jsonDecode(body);
+      throw Exception(errorData['detail']['message'] ?? 'Лимит аяқталды');
+    }
+
+    if (streamedResponse.statusCode != 200) {
+      throw Exception('Server error: ${streamedResponse.statusCode}');
+    }
+
+    // Буфер для неполных SSE-событий между TCP-пакетами
+    String buffer = '';
+
+    await for (final bytes in streamedResponse.stream) {
+      buffer += utf8.decode(bytes);
+
+      // SSE события разделяются двойным переносом строки
+      final parts = buffer.split('\n\n');
+
+      // Последняя часть может быть неполным событием — оставляем в буфере
+      buffer = parts.removeLast();
+
+      for (final part in parts) {
+        if (part.startsWith('data: ')) {
+          final data = part.substring(6); // убираем 'data: '
+
+          if (data == '[DONE]') return;
+          if (data == '[ERROR]') throw Exception('Генерация қатесі');
+
+          // Возвращаем \n обратно (они были экранированы на бэкенде)
+          yield data.replaceAll('\\n', '\n');
+        }
+      }
+    }
+  }
+
   Future<List<ChatMessage>> getChatHistory(int userId, String chatId) async {
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/chats/$userId/$chatId/history'),
-      ).timeout(const Duration(seconds: 10));
+      final response = await http
+          .get(
+            Uri.parse('$baseUrl/chats/$userId/$chatId/history'),
+          )
+          .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        final messages = (data['messages'] as List).asMap().entries.map((entry) {
+        final messages =
+            (data['messages'] as List).asMap().entries.map((entry) {
           final i = entry.key;
           final msg = entry.value;
           return ChatMessage(
@@ -156,9 +227,11 @@ class ApiService {
 
   Future<RateLimitInfo> getRateLimitInfo(int userId) async {
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/status/$userId'),
-      ).timeout(const Duration(seconds: 10));
+      final response = await http
+          .get(
+            Uri.parse('$baseUrl/status/$userId'),
+          )
+          .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         return RateLimitInfo.fromJson(jsonDecode(response.body));
@@ -172,9 +245,11 @@ class ApiService {
 
   Future<bool> checkHealth() async {
     try {
-      final response = await http.get(
-        Uri.parse(_healthUrl),
-      ).timeout(const Duration(seconds: 5));
+      final response = await http
+          .get(
+            Uri.parse(_healthUrl),
+          )
+          .timeout(const Duration(seconds: 5));
 
       return response.statusCode == 200;
     } catch (e) {
@@ -198,8 +273,8 @@ class ApiService {
       );
 
       final streamedResponse = await request.send().timeout(
-        const Duration(seconds: 60),
-      );
+            const Duration(seconds: 60),
+          );
 
       if (streamedResponse.statusCode == 200) {
         final body = await streamedResponse.stream.bytesToString();

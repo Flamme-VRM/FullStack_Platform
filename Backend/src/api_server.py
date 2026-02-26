@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse as FastAPIStreamingResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -255,7 +256,7 @@ async def create_new_chat(request: NewChatRequest):
             # Подсчитываем количество существующих чатов
             user_chats_key = get_user_chats_key(user_id)
             existing_chats = cache_service.client.llen(user_chats_key) or 0
-            title = f"Чат #{existing_chats + 1}"
+            title = "Жаңа чат"
         else:
             title = request.title
         
@@ -482,8 +483,18 @@ async def chat_endpoint(request: ChatRequest):
         
         if metadata_raw:
             metadata = msgpack.unpackb(metadata_raw)
+            was_first_message = metadata.get('message_count', 0) == 0
             metadata['last_message'] = message[:50] + "..." if len(message) > 50 else message
             metadata['message_count'] = len(history) // 2
+            
+            # Auto-generate title on first message
+            if was_first_message:
+                try:
+                    generated_title = await ai_service.generate_chat_title(message, ai_response)
+                    metadata['title'] = generated_title
+                    logger.info(f"Auto-titled chat {chat_id}: '{generated_title}'")
+                except Exception as e:
+                    logger.error(f"Auto-title failed: {e}")
             
             cache_service.client.setex(
                 metadata_key,
@@ -505,6 +516,97 @@ async def chat_endpoint(request: ChatRequest):
     except Exception as e:
         logger.error(f"Chat endpoint error: {e}")
         raise HTTPException(status_code=500, detail="Сервердегі қате орын алды")
+
+@app.post("/api/chat/stream")
+async def chat_stream_endpoint(request: ChatRequest):
+    """
+    Стриминговая версия /api/chat.
+    Возвращает SSE-поток токенов по мере генерации.
+
+    Клиент должен читать тело ответа как поток и парсить события
+    формата: data: <текст>\\n\\n
+    Конец стрима сигнализируется: data: [DONE]\\n\\n
+    """
+    user_id = request.user_id
+    chat_id = request.chat_id
+    message = request.message
+
+    # Rate limit — до начала стриминга, пока ещё можем вернуть 429
+    is_allowed, current_count, time_until_reset = cache_service.check_rate_limit(user_id)
+
+    if not is_allowed:
+        hours_left = time_until_reset // 3600
+        minutes_left = (time_until_reset % 3600) // 60
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "Rate limit exceeded",
+                "message": f"Күнделікті лимит асталды. Қалған уақыт: {hours_left}с {minutes_left}м",
+                "current_count": current_count,
+                "limit": 15,
+                "retry_after": time_until_reset
+            }
+        )
+
+    # Загружаем историю чата
+    history_key = get_chat_history_key(user_id, chat_id)
+    history_raw = cache_service.client.get(history_key)
+    history = msgpack.unpackb(history_raw, use_list=True) if history_raw else []
+
+    # Добавляем сообщение пользователя в историю
+    history.append(f"User: {message}")
+
+    def save_history_after_stream(generator):
+        """
+        Обёртка над генератором: после того как стриминг завершился,
+        собираем полный ответ из накопленных чанков и пишем в Redis.
+        """
+        full_response_parts = []
+
+        for chunk in generator:
+            # Перехватываем data-чанки чтобы накопить текст
+            if chunk.startswith("data: ") and chunk.strip() not in ("data: [DONE]", "data: [ERROR]"):
+                # Возвращаем экранированные \n обратно
+                text_part = chunk[6:].rstrip().replace("\\n", "\n")
+                full_response_parts.append(text_part)
+            yield chunk
+
+        # Генератор исчерпан — сохраняем историю
+        full_response = "".join(full_response_parts)
+        if full_response:
+            updated_history = history + [f"AsylBILIM: {full_response}"]
+            cache_service.client.setex(
+                history_key,
+                86400 * 7,
+                msgpack.packb(updated_history[-50:])
+            )
+
+            # Обновляем метаданные чата
+            metadata_key = get_chat_metadata_key(user_id, chat_id)
+            metadata_raw = cache_service.client.get(metadata_key)
+            if metadata_raw:
+                metadata = msgpack.unpackb(metadata_raw)
+                metadata["last_message"] = message[:50] + "..." if len(message) > 50 else message
+                metadata["message_count"] = len(updated_history) // 2
+                cache_service.client.setex(
+                    metadata_key,
+                    86400 * 30,
+                    msgpack.packb(metadata)
+                )
+
+    gemini_generator = ai_service.stream_response_for_chat(
+        user_id, chat_id, message, history
+    )
+
+    return FastAPIStreamingResponse(
+        save_history_after_stream(gemini_generator),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        }
+    )
+
 
 @app.post("/api/voice")
 async def voice_endpoint(

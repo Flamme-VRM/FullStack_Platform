@@ -61,8 +61,15 @@ FrontEND/ios/.symlinks/
 .DS_Store
 Thumbs.db
 
-# ===== Temporary =====
+# ===== Temporary / Non-Core =====
 *.tmp
 *.temp
 temp/
 tmp/
+*.mp4
+*.gif
+convert_to_gif.py
+video_to_gif_ui.py
+# .idea/ and .vscode/ are already handled
+# PERFORMANCE_GUIDE.md is potentially "plans" - ignoring as requested
+Backend/PERFORMANCE_GUIDE.md
