@@ -1,6 +1,6 @@
-# AsylBILIM — Mobile UI
+# Quint AI — Mobile UI
 
-Flutter-based mobile interface for the **AsylBILIM** AI-powered UNT exam preparation platform.
+Flutter-based mobile interface for the **Quint AI** AI-powered UNT exam preparation platform.
 
 ## Features
 

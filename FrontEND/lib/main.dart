@@ -3,16 +3,16 @@ import 'package:flutter/material.dart';
 import 'screens/chat_screen.dart';
 
 void main() {
-  runApp(const AsylBilimApp());
+  runApp(const QuintAIApp());
 }
 
-class AsylBilimApp extends StatelessWidget {
-  const AsylBilimApp({super.key});
+class QuintAIApp extends StatelessWidget {
+  const QuintAIApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'AsylBILIM',
+      title: 'Quint AI',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,

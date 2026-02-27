@@ -55,7 +55,7 @@ async def lifespan(app: FastAPI):
     """
     global cache_service, ai_service, speech_service
     
-    logger.info("🚀 Initializing AsylBILIM services...")
+    logger.info("🚀 Initializing Quint AI services...")
     
     try:
         # Инициализация Redis
@@ -89,7 +89,7 @@ async def lifespan(app: FastAPI):
     yield  # Здесь приложение работает
     
     # === GRACEFUL SHUTDOWN ===
-    logger.info("🛑 Shutting down AsylBILIM services...")
+    logger.info("🛑 Shutting down Quint AI services...")
     
     try:
         if cache_service:
@@ -119,7 +119,7 @@ async def lifespan(app: FastAPI):
 # ============================================================================
 
 app = FastAPI(
-    title="AsylBILIM API",
+    title="Quint AI API",
     description="REST API для UNT подготовки с множественными чатами",
     version="2.1.0",
     lifespan=lifespan  # 🔥 КРИТИЧЕСКИ ВАЖНО!
@@ -206,7 +206,7 @@ def get_user_chats_key(user_id: int) -> str:
 @app.get("/")
 async def root():
     return {
-        "app": "AsylBILIM API",
+        "app": "Quint AI API",
         "version": "2.1.0",
         "status": "running",
         "features": ["Multiple chats", "RAG", "Voice input"],
@@ -401,7 +401,7 @@ async def get_chat_history(user_id: int, chat_id: str):
                     role='user',
                     content=entry[6:]
                 ))
-            elif entry.startswith('AsylBILIM: '):
+            elif entry.startswith('Quint AI: '):
                 messages.append(MessageItem(
                     role='assistant',
                     content=entry[11:]
@@ -469,7 +469,7 @@ async def chat_endpoint(request: ChatRequest):
         )
         
         # Сохраняем историю
-        history.append(f"AsylBILIM: {ai_response}")
+        history.append(f"Quint AI: {ai_response}")
         
         cache_service.client.setex(
             history_key,
@@ -574,7 +574,7 @@ async def chat_stream_endpoint(request: ChatRequest):
         # Генератор исчерпан — сохраняем историю
         full_response = "".join(full_response_parts)
         if full_response:
-            updated_history = history + [f"AsylBILIM: {full_response}"]
+            updated_history = history + [f"Quint AI: {full_response}"]
             cache_service.client.setex(
                 history_key,
                 86400 * 7,
@@ -664,7 +664,7 @@ async def voice_endpoint(
         )
         
         # Сохраняем историю
-        history.append(f"AsylBILIM: {ai_response}")
+        history.append(f"Quint AI: {ai_response}")
         cache_service.client.setex(history_key, 86400 * 7, msgpack.packb(history[-50:]))
         
         rate_info = cache_service.get_rate_limit_info(user_id)
@@ -697,7 +697,7 @@ if __name__ == "__main__":
     
     print("""
     ╔═══════════════════════════════════════════════════════════╗
-    ║        AsylBILIM API Server v2.1 - Multiple Chats         ║
+    ║        Quint AI API Server v2.1 - Multiple Chats         ║
     ╚═══════════════════════════════════════════════════════════╝
     
     📚 API Documentation: http://localhost:8000/docs

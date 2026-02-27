@@ -1,182 +1,121 @@
-import sqlite3
 import json
 import logging
 import numpy as np
-from typing import List, Dict, Optional, Tuple
-from datetime import datetime
-import io
+import uuid
+from typing import List, Dict, Optional
+from qdrant_client import QdrantClient
+from qdrant_client.models import (
+    Distance, VectorParams, PointStruct,
+    Filter, FieldCondition, MatchValue,
+    PayloadSchemaType
+)
+from ..config import settings
 
 logger = logging.getLogger(__name__)
 
-
-def adapt_array(arr):
-    """Convert numpy array to bytes for SQLite storage."""
-    out = io.BytesIO()
-    np.save(out, arr)
-    out.seek(0)
-    return sqlite3.Binary(out.read())
-
-
-def convert_array(blob):
-    """Convert bytes back to numpy array."""
-    out = io.BytesIO(blob)
-    out.seek(0)
-    return np.load(out)
-
-
-# Register numpy array adapters for SQLite
-sqlite3.register_adapter(np.ndarray, adapt_array)
-sqlite3.register_converter("array", convert_array)
+COLLECTION_NAME = "documents"
+VECTOR_DIM = 3072  # gemini-embedding-001
 
 
 class VectorDB:
     """
-    SQLite-based vector database for semantic search.
-    Stores document chunks with their embeddings.
+    Qdrant Cloud vector database for semantic search.
+    Drop-in replacement for old SQLite-based VectorDB.
     """
     
-    def __init__(self, db_path: str = "documents.db"):
+    def __init__(self, db_path: str = None):
         """
-        Initialize vector database.
+        Initialize Qdrant Cloud connection.
         
         Args:
-            db_path: Path to SQLite database file
+            db_path: Ignored (kept for interface compatibility). 
+                     Connection is configured via settings/env.
         """
-        self.db_path = db_path
-        self._init_database()
-        logger.info(f"VectorDB initialized: {db_path}")
+        self.client = QdrantClient(
+            url=settings.QDRANT_URL,
+            api_key=settings.QDRANT_API_KEY,
+        )
+        self._ensure_collection()
+        logger.info(f"VectorDB connected to Qdrant Cloud: {settings.QDRANT_URL}")
     
-    def _init_database(self):
-        """Create database tables if they don't exist."""
-        with sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES) as conn:
-            conn.executescript("""
-                -- Documents table for metadata
-                CREATE TABLE IF NOT EXISTS documents (
-                    id TEXT PRIMARY KEY,
-                    source_file TEXT NOT NULL,
-                    subject TEXT,
-                    topic TEXT,
-                    difficulty TEXT,
-                    language TEXT DEFAULT 'kk',
-                    metadata JSON,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    chunk_count INTEGER DEFAULT 0
-                );
-                
-                -- Chunks table with embeddings
-                CREATE TABLE IF NOT EXISTS chunks (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    document_id TEXT NOT NULL,
-                    chunk_index INTEGER NOT NULL,
-                    content TEXT NOT NULL,
-                    embedding array NOT NULL,
-                    token_count INTEGER,
-                    metadata JSON,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
-                );
-                
-                -- Indexes for performance
-                CREATE INDEX IF NOT EXISTS idx_chunks_document_id 
-                    ON chunks(document_id);
-                CREATE INDEX IF NOT EXISTS idx_documents_subject 
-                    ON documents(subject);
-                CREATE INDEX IF NOT EXISTS idx_documents_topic 
-                    ON documents(topic);
-                CREATE INDEX IF NOT EXISTS idx_documents_source 
-                    ON documents(source_file);
-                
-                -- Metadata for database versioning
-                CREATE TABLE IF NOT EXISTS db_metadata (
-                    key TEXT PRIMARY KEY,
-                    value TEXT
-                );
-                
-                INSERT OR IGNORE INTO db_metadata (key, value) 
-                VALUES ('version', '1.0'), ('created_at', datetime('now'));
-            """)
-            logger.info("Database schema initialized")
+    def _ensure_collection(self):
+        """Create collection if it doesn't exist."""
+        collections = [c.name for c in self.client.get_collections().collections]
+        if COLLECTION_NAME not in collections:
+            self.client.create_collection(
+                collection_name=COLLECTION_NAME,
+                vectors_config=VectorParams(
+                    size=VECTOR_DIM,
+                    distance=Distance.COSINE,
+                ),
+            )
+            # Create payload indexes for filtered search
+            for field in ["document_id", "subject", "topic", "difficulty"]:
+                self.client.create_payload_index(
+                    collection_name=COLLECTION_NAME,
+                    field_name=field,
+                    field_schema=PayloadSchemaType.KEYWORD,
+                )
+            logger.info(f"Created Qdrant collection '{COLLECTION_NAME}' (dim={VECTOR_DIM})")
+        else:
+            logger.info(f"Qdrant collection '{COLLECTION_NAME}' already exists")
     
     def add_document(self, doc_id: str, source_file: str, 
                     metadata: Dict = None) -> bool:
         """
-        Add document metadata to database.
-        
-        Args:
-            doc_id: Unique document identifier
-            source_file: Source filename
-            metadata: Additional metadata (subject, topic, etc.)
-            
-        Returns:
-            True if successful
+        Register a document (metadata only, stored as payload on chunks).
+        Kept for interface compatibility — actual storage happens in add_chunks.
         """
-        try:
-            metadata = metadata or {}
-            
-            with sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES) as conn:
-                conn.execute("""
-                    INSERT OR REPLACE INTO documents 
-                    (id, source_file, subject, topic, difficulty, language, metadata)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    doc_id,
-                    source_file,
-                    metadata.get('subject'),
-                    metadata.get('topic'),
-                    metadata.get('difficulty'),
-                    metadata.get('language', 'kk'),
-                    json.dumps(metadata)
-                ))
-            
-            logger.debug(f"Document '{doc_id}' added to database")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error adding document '{doc_id}': {e}")
-            return False
+        self._doc_metadata_cache = getattr(self, '_doc_metadata_cache', {})
+        self._doc_metadata_cache[doc_id] = {
+            'source_file': source_file,
+            **(metadata or {})
+        }
+        logger.debug(f"Document '{doc_id}' metadata registered")
+        return True
     
     def add_chunks(self, document_id: str, chunks: List[Dict], 
                    embeddings: np.ndarray) -> int:
         """
-        Add chunks with embeddings to database.
-        
-        Args:
-            document_id: Parent document ID
-            chunks: List of chunk dicts (content, chunk_index, metadata)
-            embeddings: Numpy array of embeddings, shape (n_chunks, embedding_dim)
-            
-        Returns:
-            Number of chunks added
+        Upsert chunks with embeddings into Qdrant.
         """
         try:
             if len(chunks) != len(embeddings):
-                raise ValueError(f"Chunks count ({len(chunks)}) != embeddings count ({len(embeddings)})")
+                raise ValueError(f"Chunks ({len(chunks)}) != embeddings ({len(embeddings)})")
             
-            with sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES) as conn:
-                # Add chunks
-                for chunk, embedding in zip(chunks, embeddings):
-                    conn.execute("""
-                        INSERT INTO chunks 
-                        (document_id, chunk_index, content, embedding, token_count, metadata)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    """, (
-                        document_id,
-                        chunk['chunk_index'],
-                        chunk['content'],
-                        embedding,
-                        chunk.get('token_count'),
-                        json.dumps(chunk.get('metadata', {}))
-                    ))
-                
-                # Update chunk count in documents table
-                conn.execute("""
-                    UPDATE documents 
-                    SET chunk_count = ? 
-                    WHERE id = ?
-                """, (len(chunks), document_id))
+            doc_meta = getattr(self, '_doc_metadata_cache', {}).get(document_id, {})
             
-            logger.info(f"Added {len(chunks)} chunks for document '{document_id}'")
-            return len(chunks)
+            points = []
+            for chunk, embedding in zip(chunks, embeddings):
+                point_id = str(uuid.uuid4())
+                payload = {
+                    "document_id": document_id,
+                    "chunk_index": chunk['chunk_index'],
+                    "content": chunk['content'],
+                    "token_count": chunk.get('token_count'),
+                    "subject": doc_meta.get('subject'),
+                    "topic": doc_meta.get('topic'),
+                    "difficulty": doc_meta.get('difficulty'),
+                    "source_file": doc_meta.get('source_file', 'unknown'),
+                    "language": doc_meta.get('language', 'kk'),
+                    "chunk_metadata": chunk.get('metadata', {}),
+                }
+                points.append(PointStruct(
+                    id=point_id,
+                    vector=embedding.tolist(),
+                    payload=payload,
+                ))
+            
+            # Upsert in batches of 100
+            batch_size = 100
+            for i in range(0, len(points), batch_size):
+                self.client.upsert(
+                    collection_name=COLLECTION_NAME,
+                    points=points[i:i + batch_size],
+                )
+            
+            logger.info(f"Upserted {len(points)} chunks for document '{document_id}'")
+            return len(points)
             
         except Exception as e:
             logger.error(f"Error adding chunks for '{document_id}': {e}")
@@ -187,153 +126,83 @@ class VectorDB:
                filters: Dict = None,
                min_similarity: float = 0.0) -> List[Dict]:
         """
-        Search for most similar chunks using cosine similarity.
-        
-        Args:
-            query_embedding: Query embedding vector
-            top_k: Number of top results to return
-            filters: Optional filters (subject, topic, difficulty, document_id)
-            min_similarity: Minimum similarity threshold (0-1)
-            
-        Returns:
-            List of dicts with chunk content, similarity score, and metadata
+        Search for most similar chunks via Qdrant Cloud.
+        Cosine similarity is computed server-side.
         """
         try:
             filters = filters or {}
             
-            with sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES) as conn:
-                # Build WHERE clause for filters
-                where_clauses = []
-                params = []
-                
-                if 'subject' in filters:
-                    where_clauses.append("d.subject = ?")
-                    params.append(filters['subject'])
-                
-                if 'topic' in filters:
-                    where_clauses.append("d.topic = ?")
-                    params.append(filters['topic'])
-                
-                if 'difficulty' in filters:
-                    where_clauses.append("d.difficulty = ?")
-                    params.append(filters['difficulty'])
-                
-                if 'document_id' in filters:
-                    where_clauses.append("c.document_id = ?")
-                    params.append(filters['document_id'])
-                
-                where_sql = " AND " + " AND ".join(where_clauses) if where_clauses else ""
-                
-                # Fetch all chunks (with optional filters)
-                query = f"""
-                    SELECT 
-                        c.id,
-                        c.document_id,
-                        c.chunk_index,
-                        c.content,
-                        c.embedding,
-                        c.token_count,
-                        c.metadata,
-                        d.subject,
-                        d.topic,
-                        d.difficulty,
-                        d.source_file
-                    FROM chunks c
-                    JOIN documents d ON c.document_id = d.id
-                    WHERE 1=1 {where_sql}
-                """
-                
-                cursor = conn.execute(query, params)
-                rows = cursor.fetchall()
+            # Build Qdrant filter
+            must_conditions = []
+            for key in ['subject', 'topic', 'difficulty', 'document_id']:
+                if key in filters:
+                    must_conditions.append(
+                        FieldCondition(field=key, match=MatchValue(value=filters[key]))
+                    )
             
-            if not rows:
-                logger.warning("No chunks found in database")
-                return []
+            qdrant_filter = Filter(must=must_conditions) if must_conditions else None
             
-            # 1. Prepare matrices
-            # Convert list of embeddings from DB rows into a single 2D matrix (N chunks x Dim vector)
-            embeddings_matrix = np.vstack([row[4] for row in rows])
+            hits = self.client.search(
+                collection_name=COLLECTION_NAME,
+                query_vector=query_embedding.tolist(),
+                query_filter=qdrant_filter,
+                limit=top_k,
+                score_threshold=min_similarity if min_similarity > 0 else None,
+            )
             
-            # 2. Mathematical optimization (Vectorized Cosine Similarity)
-            # Cosine similarity = (A · B) / (||A|| * ||B||)
-            
-            # Normalize query vector (L2 norm)
-            query_unit = query_embedding / (np.linalg.norm(query_embedding) + 1e-10)
-            
-            # Normalize all vectors in chunk matrix at once
-            matrix_norms = np.linalg.norm(embeddings_matrix, axis=1, keepdims=True) + 1e-10
-            matrix_unit = embeddings_matrix / matrix_norms
-            
-            # Compute dot product - this will be the cosine similarity for normalized vectors
-            # Result is 1D array of similarities for all chunks
-            similarities = np.dot(matrix_unit, query_unit)
-            
-            # 3. Filter and assemble results
             results = []
-            for i, row in enumerate(rows):
-                similarity = float(similarities[i])
-                
-                if similarity >= min_similarity:
-                    results.append({
-                        'chunk_id': row[0],
-                        'document_id': row[1],
-                        'chunk_index': row[2],
-                        'content': row[3],
-                        'token_count': row[5],
-                        'metadata': json.loads(row[6]) if row[6] else {},
-                        'subject': row[7],
-                        'topic': row[8],
-                        'difficulty': row[9],
-                        'source_file': row[10],
-                        'similarity': similarity
-                    })
+            for hit in hits:
+                p = hit.payload
+                results.append({
+                    'chunk_id': hit.id,
+                    'document_id': p.get('document_id'),
+                    'chunk_index': p.get('chunk_index'),
+                    'content': p.get('content'),
+                    'token_count': p.get('token_count'),
+                    'metadata': p.get('chunk_metadata', {}),
+                    'subject': p.get('subject'),
+                    'topic': p.get('topic'),
+                    'difficulty': p.get('difficulty'),
+                    'source_file': p.get('source_file'),
+                    'similarity': hit.score,
+                })
             
-            # Sort by similarity and return top-K
-            results.sort(key=lambda x: x['similarity'], reverse=True)
-            top_results = results[:top_k]
-            
-            logger.info(f"Search returned {len(top_results)} results (from {len(rows)} chunks)")
-            return top_results
+            logger.info(f"Qdrant search returned {len(results)} results")
+            return results
             
         except Exception as e:
             logger.error(f"Error during search: {e}")
             return []
     
-    def _cosine_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
-        """Compute cosine similarity between two vectors."""
-        vec1_norm = vec1 / np.linalg.norm(vec1)
-        vec2_norm = vec2 / np.linalg.norm(vec2)
-        return float(np.dot(vec1_norm, vec2_norm))
-    
     def get_document_stats(self, doc_id: str) -> Optional[Dict]:
         """Get statistics for a specific document."""
         try:
-            with sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES) as conn:
-                cursor = conn.execute("""
-                    SELECT 
-                        d.*,
-                        COUNT(c.id) as actual_chunk_count,
-                        AVG(c.token_count) as avg_chunk_tokens
-                    FROM documents d
-                    LEFT JOIN chunks c ON d.id = c.document_id
-                    WHERE d.id = ?
-                    GROUP BY d.id
-                """, (doc_id,))
-                
-                row = cursor.fetchone()
-                if not row:
-                    return None
-                
-                return {
-                    'id': row[0],
-                    'source_file': row[1],
-                    'subject': row[2],
-                    'topic': row[3],
-                    'difficulty': row[4],
-                    'language': row[5],
-                    'chunk_count': row[8],
-                    'avg_chunk_tokens': row[9]
-                }
+            hits = self.client.scroll(
+                collection_name=COLLECTION_NAME,
+                scroll_filter=Filter(must=[
+                    FieldCondition(field="document_id", match=MatchValue(value=doc_id))
+                ]),
+                limit=1000,
+                with_payload=True,
+                with_vectors=False,
+            )[0]
+            
+            if not hits:
+                return None
+            
+            token_counts = [h.payload.get('token_count', 0) or 0 for h in hits]
+            first = hits[0].payload
+            
+            return {
+                'id': doc_id,
+                'source_file': first.get('source_file'),
+                'subject': first.get('subject'),
+                'topic': first.get('topic'),
+                'difficulty': first.get('difficulty'),
+                'language': first.get('language'),
+                'chunk_count': len(hits),
+                'avg_chunk_tokens': sum(token_counts) / max(len(token_counts), 1),
+            }
         except Exception as e:
             logger.error(f"Error getting stats for '{doc_id}': {e}")
             return None
@@ -341,59 +210,72 @@ class VectorDB:
     def get_database_stats(self) -> Dict:
         """Get overall database statistics."""
         try:
-            with sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES) as conn:
-                # Count documents and chunks
-                cursor = conn.execute("""
-                    SELECT 
-                        COUNT(DISTINCT d.id) as doc_count,
-                        COUNT(c.id) as chunk_count,
-                        AVG(c.token_count) as avg_chunk_size,
-                        SUM(c.token_count) as total_tokens
-                    FROM documents d
-                    LEFT JOIN chunks c ON d.id = c.document_id
-                """)
-                row = cursor.fetchone()
-                
-                # Get subjects distribution
-                cursor = conn.execute("""
-                    SELECT subject, COUNT(*) as count
-                    FROM documents
-                    WHERE subject IS NOT NULL
-                    GROUP BY subject
-                    ORDER BY count DESC
-                """)
-                subjects = dict(cursor.fetchall())
-                
-                return {
-                    'total_documents': row[0] or 0,
-                    'total_chunks': row[1] or 0,
-                    'avg_chunk_size': row[2] or 0,
-                    'total_tokens': row[3] or 0,
-                    'subjects_distribution': subjects
-                }
+            collection_info = self.client.get_collection(COLLECTION_NAME)
+            total_chunks = collection_info.points_count or 0
+            
+            # Get a sample to count unique documents and subjects
+            all_points = []
+            offset = None
+            while True:
+                points, next_offset = self.client.scroll(
+                    collection_name=COLLECTION_NAME,
+                    limit=1000,
+                    offset=offset,
+                    with_payload=["document_id", "subject", "token_count"],
+                    with_vectors=False,
+                )
+                all_points.extend(points)
+                if next_offset is None:
+                    break
+                offset = next_offset
+            
+            doc_ids = set()
+            subjects = {}
+            total_tokens = 0
+            token_counts = []
+            
+            for p in all_points:
+                payload = p.payload
+                doc_ids.add(payload.get('document_id'))
+                subj = payload.get('subject')
+                if subj:
+                    subjects[subj] = subjects.get(subj, 0) + 1
+                tc = payload.get('token_count') or 0
+                total_tokens += tc
+                token_counts.append(tc)
+            
+            return {
+                'total_documents': len(doc_ids),
+                'total_chunks': total_chunks,
+                'avg_chunk_size': sum(token_counts) / max(len(token_counts), 1),
+                'total_tokens': total_tokens,
+                'subjects_distribution': subjects,
+            }
         except Exception as e:
             logger.error(f"Error getting database stats: {e}")
             return {}
     
     def delete_document(self, doc_id: str) -> bool:
-        """Delete document and its chunks."""
+        """Delete all chunks belonging to a document."""
         try:
-            with sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES) as conn:
-                conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
-                # Chunks are deleted automatically due to CASCADE
-            logger.info(f"Document '{doc_id}' deleted")
+            self.client.delete(
+                collection_name=COLLECTION_NAME,
+                points_selector=Filter(must=[
+                    FieldCondition(field="document_id", match=MatchValue(value=doc_id))
+                ]),
+            )
+            logger.info(f"Document '{doc_id}' deleted from Qdrant")
             return True
         except Exception as e:
             logger.error(f"Error deleting document '{doc_id}': {e}")
             return False
     
     def clear_database(self) -> bool:
-        """Clear all documents and chunks."""
+        """Delete the collection and recreate it."""
         try:
-            with sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES) as conn:
-                conn.execute("DELETE FROM chunks")
-                conn.execute("DELETE FROM documents")
-            logger.info("Database cleared")
+            self.client.delete_collection(collection_name=COLLECTION_NAME)
+            self._ensure_collection()
+            logger.info("Qdrant collection cleared and recreated")
             return True
         except Exception as e:
             logger.error(f"Error clearing database: {e}")

@@ -1,6 +1,6 @@
-# AsylBILIM — AI Platform
+# Quint AI — AI Platform
 
-> **Асыл Білім** (Kazakh: *Precious Knowledge*) — an AI-powered backend for UNT exam preparation, delivering intelligent tutoring in Kazakh via a REST API and Telegram bot.
+> **Quint AI** — an AI-powered backend for UNT exam preparation, delivering intelligent tutoring in Kazakh via a REST API and Telegram bot.
 
 Built on **Google Gemini 3.0 Flash**, **RAG** (Retrieval-Augmented Generation), and **Kazakh Whisper STT**, deployed over **FastAPI** with **Redis** for persistence. Supports **SSE Streaming** for real-time word-by-word delivery.
 
@@ -155,7 +155,7 @@ All chat state is stored in Redis using msgpack serialization:
 |-----|------|-----|---------|
 | `user_chats:{user_id}` | List | 30 days | Ordered list of chat UUIDs |
 | `chat_metadata:{user_id}:{chat_id}` | String | 30 days | Title, dates, last message, count |
-| `chat_history:{user_id}:{chat_id}` | String | 7 days | `["User: ...", "AsylBILIM: ..."]` |
+| `chat_history:{user_id}:{chat_id}` | String | 7 days | `["User: ...", "Quint AI: ..."]` |
 | `rate_limit:{user_id}` | String | 24 hours | Message count for current window |
 
 ---
@@ -287,4 +287,4 @@ This backend powers the **AsylBILIM Flutter mobile app**:
 
 ---
 
-*Empowering Kazakhstani students to excel in UNT through AI-powered education* 🇰🇿
+Quint AI students to excel in UNT through AI-powered education* 🇰🇿

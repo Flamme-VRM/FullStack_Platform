@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import numpy as np
 from google import genai
 from google.genai import types as genai_types
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -36,6 +37,12 @@ class AIService:
         except Exception as e:
             logger.error(f"Failed to initialize vector search: {e}")
             self.use_vector_search = False
+
+        # Pre-compute chit-chat centroid for semantic routing
+        self._chit_chat_centroid = None
+        self._rag_threshold = 0.45  # below this similarity → educational → run RAG
+        if self.use_vector_search:
+            self._init_semantic_router()
 
         if not self.system_prompt:
             logger.warning("System prompt could not be loaded")
@@ -74,16 +81,87 @@ class AIService:
             logger.error(f"Error reading system prompt file '{filename}': {str(e)}")
             return ""
 
+    def _init_semantic_router(self):
+        """
+        Pre-compute a chit-chat centroid vector at startup.
+        Embedding a diverse set of greetings/thanks/identity phrases in
+        Kazakh, Russian, and English, then averaging them into one vector.
+        Cost: a single API call at boot, stored forever in RAM (~12KB).
+        """
+        CHIT_CHAT_EXAMPLES = [
+            # Kazakh greetings & small talk
+            "Сәлем", "Сәлеметсіз бе", "Қалайсың", "Қалайсыз", "Қалың қалай",
+            "Саламатсыз ба", "Қайырлы таң", "Қайырлы кеш",
+            # Kazakh thanks & farewell
+            "Рахмет", "Рақмет", "Көп рахмет", "Сау бол", "Сау болыңыз",
+            "Жақсы", "Жарайды", "Түсіндім", "Мақұл",
+            # Kazakh identity
+            "Сен кімсің", "Атың кім", "Сенің атың кім",
+            "Не істей аласың", "Сенің міндетің не", "Сен бот сың ба",
+            # Kazakh generic
+            "Көмектес", "Баста", "Бастайық", "Жалғастыр",
+            # Russian greetings & small talk
+            "Привет", "Здравствуй", "Здравствуйте", "Как дела", "Как ты",
+            "Доброе утро", "Добрый вечер",
+            # Russian thanks & farewell
+            "Спасибо", "Благодарю", "Большое спасибо", "Пока", "До свидания",
+            "Хорошо", "Ладно", "Понял", "Ок",
+            # Russian identity
+            "Ты кто", "Кто ты", "Что ты умеешь", "Что ты можешь",
+            "Ты бот", "Ты искусственный интеллект",
+            # English greetings
+            "Hi", "Hello", "Hey", "Good morning", "How are you",
+            # English thanks & farewell
+            "Thanks", "Thank you", "Bye", "Goodbye", "See you",
+            "OK", "Okay", "Sure", "Got it", "Alright",
+            # English identity
+            "Who are you", "What are you", "What can you do",
+            "Are you a bot", "Are you AI",
+        ]
+
+        try:
+            embeddings = self.embedding_service.encode(CHIT_CHAT_EXAMPLES)
+            centroid = np.mean(embeddings, axis=0)
+            # Normalize to unit vector for fast cosine via dot product
+            self._chit_chat_centroid = centroid / np.linalg.norm(centroid)
+            logger.info(f"Semantic router initialized: {len(CHIT_CHAT_EXAMPLES)} chit-chat examples embedded")
+        except Exception as e:
+            logger.error(f"Failed to init semantic router: {e}")
+            self._chit_chat_centroid = None
+
+    def _needs_rag(self, message: str) -> bool:
+        """
+        Semantic router using embedding cosine distance.
+        Compares the message embedding to a pre-computed chit-chat centroid.
+        If close enough -> chit-chat -> skip RAG.
+        """
+        # Fallback: if centroid failed to init, always run RAG (safe default)
+        if self._chit_chat_centroid is None:
+            return True
+
+        try:
+            # Embed the user message (we'll reuse this embedding for search too)
+            msg_embedding = self.embedding_service.encode(message)[0]
+
+            # Cosine similarity = dot product of normalized vectors
+            similarity = float(np.dot(msg_embedding, self._chit_chat_centroid))
+
+            if similarity >= self._rag_threshold:
+                logger.info(f"Router: SKIP RAG (chit-chat, sim={similarity:.3f}): '{message[:50]}'")
+                return False
+            else:
+                logger.debug(f"Router: RUN RAG (educational, sim={similarity:.3f}): '{message[:50]}'")
+                return True
+
+        except Exception as e:
+            logger.error(f"Router error, defaulting to RAG: {e}")
+            return True  # safe fallback
+
+
     def _retrieve_relevant_documents(self, query: str, top_k: int = None) -> str:
         """
         Retrieve relevant educational content using semantic search.
-        
-        Args:
-            query: User query
-            top_k: Number of top chunks to retrieve
-            
-        Returns:
-            Formatted context string for AI
+        Skips the DB entirely for chit-chat via the semantic router.
         """
         if top_k is None:
             top_k = settings.TOP_K_RESULTS
@@ -91,10 +169,15 @@ class AIService:
         if not self.use_vector_search:
             logger.debug("Vector search not available, skipping retrieval")
             return ""
-        
+
+        # === SEMANTIC ROUTER: skip RAG for non-educational messages ===
+        if not self._needs_rag(query):
+            return ""
+
         try:
             # Generate embedding for query
             query_embedding = self.embedding_service.encode(query)[0]
+
             
             # Search for similar chunks
             results = self.vector_db.search(
@@ -166,7 +249,7 @@ class AIService:
                 logger.error(f"Empty response from AI model for user {user_id}")
                 return "Кешіріңіз, жауап алу мүмкін болмады. Қайталап көріңіз."
 
-            history.append(f"AsylBILIM: {response.text}")
+            history.append(f"Quint AI: {response.text}")
             self.cache.save_user_history(user_id, history)
             self.cache.cache_response(full_prompt, response.text)
 

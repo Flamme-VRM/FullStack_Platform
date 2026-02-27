@@ -35,12 +35,10 @@ logger = logging.getLogger(__name__)
 def print_banner():
     """Print welcome banner."""
     banner = """
-╔══════════════════════════════════════════════════════════╗
-║                                                          ║
-║     AsylBILIM Document Indexer                          ║
-║     Offline Semantic Search Indexing                     ║
-║                                                          ║
-╚══════════════════════════════════════════════════════════╝
+==========================================================
+     AsylBILIM Document Indexer
+     Offline Semantic Search Indexing
+==========================================================
     """
     print(banner)
 
@@ -48,27 +46,27 @@ def print_banner():
 def print_stats(stats: dict):
     """Pretty print indexing statistics."""
     print("\n" + "="*60)
-    print("📊 INDEXING STATISTICS")
+    print("[STATS] INDEXING STATISTICS")
     print("="*60)
     
     if stats.get('success'):
-        print(f"✓ Status:              Success")
-        print(f"✓ Documents processed: {stats['documents_processed']}")
-        print(f"✓ Documents indexed:   {stats['documents_successful']}")
+        print(f"[OK] Status:              Success")
+        print(f"[OK] Documents processed: {stats['documents_processed']}")
+        print(f"[OK] Documents indexed:   {stats['documents_successful']}")
         if stats['documents_failed'] > 0:
-            print(f"✗ Documents failed:    {stats['documents_failed']}")
-        print(f"✓ Total chunks:        {stats['total_chunks']}")
-        print(f"✓ Total tokens:        {stats['total_tokens']:,}")
-        print(f"✓ Avg chunk size:      {stats['avg_chunk_size']:.1f} tokens")
-        print(f"✓ Time elapsed:        {stats['elapsed_time']:.2f} seconds")
+            print(f"[FAIL] Documents failed:  {stats['documents_failed']}")
+        print(f"[OK] Total chunks:        {stats['total_chunks']}")
+        print(f"[OK] Total tokens:        {stats['total_tokens']:,}")
+        print(f"[OK] Avg chunk size:      {stats['avg_chunk_size']:.1f} tokens")
+        print(f"[OK] Time elapsed:        {stats['elapsed_time']:.2f} seconds")
         
         if stats.get('subjects'):
-            print(f"\n📚 Subjects indexed:")
+            print(f"\nSubjects indexed:")
             for subject, count in stats['subjects'].items():
-                print(f"   • {subject}: {count} documents")
+                print(f"   - {subject}: {count} documents")
     else:
-        print(f"✗ Status: Failed")
-        print(f"✗ Error: {stats.get('error', 'Unknown error')}")
+        print(f"[FAIL] Status: Failed")
+        print(f"[FAIL] Error: {stats.get('error', 'Unknown error')}")
     
     print("="*60 + "\n")
 
@@ -76,27 +74,27 @@ def print_stats(stats: dict):
 def print_status(status: dict):
     """Pretty print indexing status."""
     print("\n" + "="*60)
-    print("📊 CURRENT INDEXING STATUS")
+    print("[STATS] CURRENT INDEXING STATUS")
     print("="*60)
     
     print(f"RAG files available:   {status['rag_files_available']}")
     print(f"Documents indexed:     {status['documents_indexed']}")
-    print(f"Needs indexing:        {'Yes ⚠️' if status['needs_indexing'] else 'No ✓'}")
+    print(f"Needs indexing:        {'Yes [!]' if status['needs_indexing'] else 'No [OK]'}")
     
     db_stats = status['database_stats']
     if db_stats.get('total_chunks', 0) > 0:
-        print(f"\n📦 Database Statistics:")
+        print(f"\nDatabase Statistics:")
         print(f"   Total chunks:       {db_stats['total_chunks']}")
         print(f"   Total tokens:       {db_stats['total_tokens']:,}")
         print(f"   Avg chunk size:     {db_stats['avg_chunk_size']:.1f} tokens")
         
         if db_stats.get('subjects_distribution'):
-            print(f"\n📚 Subjects:")
+            print(f"\nSubjects:")
             for subject, count in db_stats['subjects_distribution'].items():
                 print(f"   • {subject}: {count} documents")
     
     model_info = status['model_info']
-    print(f"\n🤖 Embedding Model:")
+    print(f"\nEmbedding Model:")
     print(f"   Model:              {model_info.get('model_name', 'N/A')}")
     print(f"   Embedding dim:      {model_info.get('embedding_dim', 'N/A')}")
     print(f"   Device:             {model_info.get('device', 'N/A')}")
@@ -189,15 +187,15 @@ Examples:
             success = indexer.reindex_document(args.reindex)
             
             if success:
-                print(f"✓ Document '{args.reindex}' re-indexed successfully!")
+                print(f"[OK] Document '{args.reindex}' re-indexed successfully!")
             else:
-                print(f"✗ Failed to re-index document '{args.reindex}'")
+                print(f"[FAIL] Failed to re-index document '{args.reindex}'")
                 sys.exit(1)
         
         else:
             # Full indexing
             if args.clear:
-                print("⚠️  WARNING: This will delete all existing indexed data!")
+                print("WARNING: This will delete all existing indexed data!")
                 response = input("Continue? (yes/no): ")
                 if response.lower() != 'yes':
                     print("Aborted.")
@@ -213,14 +211,14 @@ Examples:
             if not stats.get('success'):
                 sys.exit(1)
         
-        print("✓ Done!")
+        print("[OK] Done!")
         
     except KeyboardInterrupt:
-        print("\n\n⚠️  Indexing interrupted by user")
+        print("\n\n[!] Indexing interrupted by user")
         sys.exit(1)
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
-        print(f"\n✗ Fatal error: {e}")
+        print(f"\n[FAIL] Fatal error: {e}")
         sys.exit(1)
 
 

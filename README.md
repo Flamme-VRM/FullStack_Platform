@@ -1,6 +1,6 @@
-# AsylBILIM — AI-Powered UNT Exam Preparation Platform
+# Quint AI — AI-Powered UNT Exam Preparation Platform
 
-AsylBILIM (Асыл Білім — "Precious Knowledge" in Kazakh) is a fullstack AI assistant built for students preparing for the **UNT** (Unified National Testing) in Kazakhstan. It combines a **FastAPI** backend with a **Flutter** mobile frontend to deliver intelligent, context-aware tutoring across Math, Informatics, and History.
+Quint AI is a fullstack AI assistant built for students preparing for the **UNT** (Unified National Testing) in Kazakhstan. It combines a **FastAPI** backend with a **Flutter** mobile frontend to deliver intelligent, context-aware tutoring across Math, Informatics, and History.
 
 
 ![App Demo](demo.gif)
