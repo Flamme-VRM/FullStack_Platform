@@ -21,7 +21,7 @@ graph TD
     A[Flutter App] -->|HTTP SSE| B[FastAPI Server]
     B -->|Chat & Memory| C[(Redis Cloud)]
     B -->|AI Generation| D[Google Gemini 3.0 Flash]
-    B -->|Knowledge Retrieval| E[(RAG / Vector DB)]
+    B -->|Knowledge Retrieval| E[(Qdrant Cloud / Vector DB)]
     B -->|Speech Recognition| F[Whisper STT]
 ```
 
@@ -38,7 +38,8 @@ Located in `Backend/`. A FastAPI server that handles all application logic: chat
 | Web Framework | FastAPI 0.104+ with Uvicorn (SSE Streaming) |
 | AI / LLM | Google Gemini 3.0 Flash |
 | Caching & Storage | Redis Cloud (via `redis-py` + `msgpack`) |
-| Semantic Search | Sentence Transformers (all-MiniLM-L6-v2) |
+| Semantic Search | Google gemini-embedding-001 |
+| Vector Database | Qdrant Cloud |
 | Speech-to-Text | Hugging Face Whisper (GPU-accelerated) |
 | Bot Interface | Aiogram 3 (Telegram) |
 | Config Management | Pydantic Settings + `.env` |
@@ -102,8 +103,8 @@ Interactive docs available at `http://localhost:8000/docs` when the server is ru
 1. **Request arrives** at `/api/chat` with `user_id`, `chat_id`, and `message`
 2. **Rate limit check** — max 15 messages per 24 hours per user (enforced in Redis)
 3. **Chat history loaded** from Redis (`chat_history:{user_id}:{chat_id}`)
-4. **RAG retrieval** — the message is embedded and semantically matched against the knowledge base in `documents.db` to find the top-K relevant passages
-5. **Prompt assembled** — system prompt + retrieved context + full conversation history sent to Gemini
+4. **RAG retrieval** — the message is embedded via **gemini-embedding-001** and semantically matched against the knowledge base in **Qdrant Cloud** to find the top-K relevant passages
+5. **Prompt assembled** — system prompt + retrieved context + full conversation history sent to Gemini 3.0 Flash
 6. **Streaming Response** — Gemini generates tokens, backend yields them via SSE to Flutter
 7. **History updated** — Full response saved in Redis after streaming finishes (TTL: 7 days)
 8. **Chat metadata updated** (last message preview, message count, TTL: 30 days)

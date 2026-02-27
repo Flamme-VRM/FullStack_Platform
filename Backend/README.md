@@ -27,16 +27,16 @@ Client (Flutter App / Telegram)
 ┌──────────────────────────────────────────────────────┐
 │                FastAPI  (api_server.py)               │
 │                                                      │
-│  /api/chat ──► AIService ──► Gemini LLM              │
-│  /api/chat/stream ──► SSE Stream ──► Gemini LLM      │
-│                    └──► RAG Pipeline ──► Vector DB   │
+│  /api/chat ──► AIService ──► Gemini 3.0 Flash        │
+│  /api/chat/stream ──► SSE Stream ──► Gemini 3.0 Flash│
+│                    └──► RAG Pipeline ──► Qdrant Cloud│
 │  /api/voice ──► SpeechToTextService (Whisper)        │
 │  /api/chats/* ──► CacheService ──► Redis             │
 └──────────────────────────────────────────────────────┘
         │                    │
-      Redis              SQLite
-  (chat history,        (vector store
-   metadata,            documents.db)
+      Redis              Qdrant Cloud
+  (chat history,        (vector store)
+   metadata,            
    rate limits)
 ```
 
@@ -56,8 +56,8 @@ AI_Platform/
 │       ├── ai.py                  # AI generation + RAG pipeline integration
 │       ├── cache.py               # Redis client — history, metadata, rate limits
 │       ├── speech_to_text.py     # Whisper Kazakh ASR service
-│       ├── embeddings.py          # Sentence-Transformers embedding model
-│       ├── vector_db.py           # SQLite-backed local vector store
+│       ├── embeddings.py          # Google gemini-embedding-001 service
+│       ├── vector_db.py           # Qdrant Cloud vector store wrapper
 │       ├── improved_rag_service.py # Semantic retrieval (top-K search)
 │       ├── chunker.py             # Text chunking for RAG indexing
 │       ├── document_loader.py    # Load JSON docs from RAG/
@@ -131,9 +131,9 @@ User message
     │
     ├─ 2. Load chat history from Redis
     │
-    ├─ 3. Embed message with Sentence-Transformers
+    ├─ 3. Embed message with Google gemini-embedding-001
     │
-    ├─ 4. Semantic search → top-K passages from documents.db
+    ├─ 4. Semantic search → top-K passages from Qdrant Cloud
     │
     ├─ 5. Build prompt:
     │       [System Prompt] + [Retrieved Context] + [Chat History] + [Message]
@@ -231,10 +231,12 @@ REDIS_PORT=15792
 REDIS_USERNAME=default
 REDIS_PASSWORD=your_redis_password
 
+QDRANT_URL=your_qdrant_cloud_url
+QDRANT_API_KEY=your_qdrant_api_key
+
 RATE_LIMIT=15
 RATE_WINDOW_HOURS=24
 
-VECTOR_DB_PATH=documents.db
 SYSPROMPT_PATH=SYSPROMPT.txt
 ```
 
